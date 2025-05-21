@@ -36,6 +36,7 @@ def interpolate_path(waypoints, interval=60):
     return path
 
 
+# To calculate the distance
 def euclidean_distance(p1, p2):
     dx = p1["x"] - p2["x"]
     dy = p1["y"] - p2["y"]
@@ -43,7 +44,7 @@ def euclidean_distance(p1, p2):
     return math.sqrt(dx ** 2 + dy ** 2 + dz ** 2)
 
 
-# Conflict Detection with minimum distance threshold as 5m
+# Conflict Detection with minimum distance threshold of 5m
 def detect_conflicts(primary_path, other_drones_paths, buffer_distance=5.0):
     conflicts = []
     for drone in other_drones_paths:
@@ -67,7 +68,7 @@ def detect_conflicts(primary_path, other_drones_paths, buffer_distance=5.0):
     return conflicts
 
 
-# Convert Path to NumPy Arrays for smoother animation
+# Convert Path to NumPy Arrays for smoother animation as arrays are faster than lists
 def path_to_array(path):
     times = [p['time'] for p in path]
     coords = np.array([[p['x'], p['y'], p['z']] for p in path])

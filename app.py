@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import imageio
 
-# Load the other drones JSON once here
 with open('in_the_air_drones.json') as f:
     other_drones = json.load(f)
 
@@ -20,7 +19,6 @@ def parse_uploaded_file(uploaded_file):
 
 def display_mission_data(data):
     st.subheader("📍 Mission Details")
-    # Since primary_drone.json has waypoints only (no start_time/end_time), infer from first/last waypoints
     start_time = data['waypoints'][0]['time']
     end_time = data['waypoints'][-1]['time']
     st.write(f"**Start Time:** {start_time}")
