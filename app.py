@@ -1,21 +1,12 @@
 import streamlit as st
 import json
-import tempfile
-from deconfliction_system import interpolate_path, detect_conflicts
-import matplotlib.pyplot as plt
-import numpy as np
-import imageio
+from deconfliction_system import interpolate_path, detect_conflicts, create_gif, generate_safe_path
+from datetime import datetime
 
-with open('in_the_air_drones.json') as f:
-    other_drones = json.load(f)
-
-def parse_uploaded_file(uploaded_file):
-    try:
-        data = json.load(uploaded_file)
-        return data
-    except Exception as e:
-        st.error(f"Error parsing JSON file: {e}")
-        return None
+@st.cache_data
+def load_other_drones():
+    with open('in_the_air_drones.json') as f:
+        return json.load(f)
 
 def display_mission_data(data):
     st.subheader("📍 Mission Details")
@@ -27,101 +18,94 @@ def display_mission_data(data):
     for i, wp in enumerate(data["waypoints"]):
         st.write(f"- Waypoint {i + 1}: (x={wp['x']}, y={wp['y']}, z={wp['z']}), time={wp['time']}")
 
-def create_gif(primary_path, other_drones_paths, conflicts, gif_path):
-    fig = plt.figure(figsize=(8, 6))
-    ax = fig.add_subplot(111, projection='3d')
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-
-    primary_times = [p['time'] for p in primary_path]
-    primary_coords = np.array([[p['x'], p['y'], p['z']] for p in primary_path])
-
-    drones_data = []
-    for drone in other_drones_paths:
-        times = [p['time'] for p in drone['path']]
-        coords = np.array([[p['x'], p['y'], p['z']] for p in drone['path']])
-        drones_data.append((drone['id'], times, coords))
-
-    conflict_points = np.array([[c['location']['x'], c['location']['y'], c['location']['z']] for c in conflicts]) if conflicts else np.empty((0,3))
-
-    # Draw static paths
-    ax.plot(primary_coords[:, 0], primary_coords[:, 1], primary_coords[:, 2], label="Primary Drone", color='blue')
-    for drone_id, times, coords in drones_data:
-        ax.plot(coords[:, 0], coords[:, 1], coords[:, 2], label=drone_id, linestyle='--', alpha=0.6)
-    if len(conflict_points) > 0:
-        ax.scatter(conflict_points[:, 0], conflict_points[:, 1], conflict_points[:, 2], c='red', s=60, label='Conflicts')
-
-    ax.legend()
-
-    drone_markers = [ax.plot([], [], [], 'o')[0] for _ in drones_data]
-    primary_marker, = ax.plot([], [], [], 'o', color='blue')
-
-    images = []
-    for frame_idx in range(len(primary_path)):
-        current_time = primary_times[frame_idx]
-
-        primary_marker.set_data([primary_coords[frame_idx, 0]], [primary_coords[frame_idx, 1]])
-        primary_marker.set_3d_properties([primary_coords[frame_idx, 2]])
-
-        for i, (drone_id, times, coords) in enumerate(drones_data):
-            if frame_idx < len(coords):
-                drone_markers[i].set_data([coords[frame_idx, 0]], [coords[frame_idx, 1]])
-                drone_markers[i].set_3d_properties([coords[frame_idx, 2]])
-
-        ax.set_title(f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-        # Draw the canvas and convert to image
-        fig.canvas.draw()
-        w, h = fig.canvas.get_width_height()
-        buf = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8)
-        buf.shape = (h, w, 4)
-        # Convert ARGB to RGBA
-        buf = buf[:, :, [1, 2, 3, 0]]
-        # Convert to RGB (drop alpha)
-        image = buf[:, :, :3]
-        images.append(image)
-
-    # Save images as GIF
-    imageio.mimsave(gif_path, images, fps=5, loop=0)
-
-    plt.close(fig)
-
 def main():
     st.title("🚁 UAV Strategic Deconfliction System")
-    st.write("Upload the primary drone mission JSON file (`primary_drone.json`). The system will automatically load other airborne drones' data.")
+
+    other_drones = load_other_drones()
 
     uploaded_file = st.file_uploader("Upload Primary Drone Mission JSON", type=["json"])
 
     if uploaded_file:
-        primary_drone = parse_uploaded_file(uploaded_file)
-        if primary_drone:
-            display_mission_data(primary_drone)
+        try:
+            primary_drone = json.load(uploaded_file)
+        except Exception as e:
+            st.error(f"Error loading JSON: {e}")
+            return
 
-            if st.button("🛡️ Check for Conflicts"):
-                # Interpolate paths
-                primary_path = interpolate_path(primary_drone['waypoints'])
+        display_mission_data(primary_drone)
 
-                other_drones_paths = []
-                for drone in other_drones:
-                    interpolated = interpolate_path(drone['waypoints'])
-                    other_drones_paths.append({"id": drone['id'], "path": interpolated})
+        # Initialize session state variables to store data between reruns
+        if 'conflicts' not in st.session_state:
+            st.session_state.conflicts = None
+        if 'primary_path' not in st.session_state:
+            st.session_state.primary_path = None
+        if 'other_drones_paths' not in st.session_state:
+            st.session_state.other_drones_paths = None
+        if 'safe_path' not in st.session_state:
+            st.session_state.safe_path = None
 
-                conflicts = detect_conflicts(primary_path, other_drones_paths)
+        if st.button("🛡️ Check for Conflicts"):
+            primary_path = interpolate_path(primary_drone['waypoints'], interval=1)
+            other_drones_paths = []
+            for drone in other_drones:
+                interpolated = interpolate_path(drone['waypoints'], interval=1)
+                other_drones_paths.append({"id": drone['id'], "path": interpolated})
 
-                if conflicts:
-                    st.error("Conflict Detected! ❌")
-                    for c in conflicts:
-                        st.write(f"Conflict with **{c['conflict_with']}** at {c['location']} on {c['time']}, distance: {c['distance']:.2f}m")
-                else:
-                    st.success("Mission is clear ✅")
+            conflicts = detect_conflicts(primary_path, other_drones_paths, buffer_distance=5.0, debug=True)
 
-                # Create GIF and display
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".gif") as tmp_gif:
-                    create_gif(primary_path, other_drones_paths, conflicts, tmp_gif.name)
-                    st.subheader("🎥 4D UAV Deconfliction Simulation")
-                    st.image(tmp_gif.name, caption="Drone Mission Conflict Visualization (GIF)", use_container_width=True)
+            st.session_state.primary_path = primary_path
+            st.session_state.other_drones_paths = other_drones_paths
+            st.session_state.conflicts = conflicts
+            st.session_state.safe_path = None  # reset safe path when checking conflicts again
 
+        # Show conflict info if available
+        if st.session_state.conflicts is not None and st.session_state.primary_path is not None:
+            conflicts = st.session_state.conflicts
+            primary_path = st.session_state.primary_path
+            other_drones_paths = st.session_state.other_drones_paths
+
+            if conflicts:
+                st.error("Conflict Detected! ❌")
+                for c in conflicts:
+                    loc = c['location']
+                    st.write(f"Conflict with **{c['conflict_with']}** at (x={loc['x']:.2f}, y={loc['y']:.2f}, z={loc['z']:.2f}) on {c['time']}, distance: {c['distance']:.2f}m")
+            else:
+                st.success("Mission is clear ✅")
+
+            create_gif(primary_path, other_drones_paths, conflicts, "current_mission_simulation.gif")
+            st.subheader("🎥 Current Mission Simulation")
+            st.image("current_mission_simulation.gif", caption="Drone Mission Visualization (GIF)", use_container_width=True)
+
+            # Show generate safe path button only if conflict detected
+            if conflicts:
+                if st.button("🛠️ Generate Safe Path"):
+                    # Generate safe path and store in session state
+                    safe_path = generate_safe_path(primary_path, conflicts)
+                    st.session_state.safe_path = safe_path
+
+        # If safe_path exists in session_state, show results
+        if st.session_state.safe_path is not None:
+            st.success("Safe path generated ✅")
+            new_path = st.session_state.safe_path
+            output_data = {
+                "id": primary_drone.get('id', 'primary_drone') + "_safe",
+                "waypoints": [
+                    {"x": p['x'], "y": p['y'], "z": p['z'], "time": p['time'].isoformat()}
+                    for p in new_path
+                ]
+            }
+            json_data = json.dumps(output_data, indent=2)
+
+            st.download_button(
+                label="Download Safe Path JSON",
+                data=json_data,
+                file_name="new_primary_path.json",
+                mime="application/json"
+            )
+
+            create_gif(new_path, st.session_state.other_drones_paths, st.session_state.conflicts, "safe_path_simulation.gif")
+            st.subheader("🎥 Safe Path Simulation")
+            st.image("safe_path_simulation.gif", caption="Safe Path Conflict Visualization (GIF)", use_container_width=True)
 
 if __name__ == "__main__":
     main()
